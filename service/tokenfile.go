@@ -71,12 +71,6 @@ func (*TokenFileServiceImpl) Write(tokenDirectory string, job salmonide.Job) (fi
 	if _, err := tokenFile.WriteString("\n"); err != nil {
 		return "", cleanup, err
 	}
-	if _, err := tokenFile.WriteString(job.SecretToken); err != nil {
-		return "", cleanup, err
-	}
-	if _, err := tokenFile.WriteString("\n"); err != nil {
-		return "", cleanup, err
-	}
 	if err := tokenFile.Close(); err != nil {
 		return "", cleanup, err
 	}

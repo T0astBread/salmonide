@@ -242,6 +242,7 @@ func (h *ActorHandler) handle(ctx context.Context, conn *jsonrpc2.Conn, request 
 
 	replyErr := func() error {
 		if err == nil {
+			log.Printf("responding to %s with successful result", request.ID.String())
 			return conn.Reply(ctx, request.ID, result)
 		}
 
@@ -253,6 +254,7 @@ func (h *ActorHandler) handle(ctx context.Context, conn *jsonrpc2.Conn, request 
 				Message: err.Error(),
 			}
 		}
+		log.Printf("responding to %s with error: %s", request.ID.String(), errReply.Message)
 		return conn.ReplyWithError(ctx, request.ID, errReply)
 	}()
 

@@ -126,8 +126,12 @@ func main() {
 	// 	break
 	// }
 
+	if err := coordinator.Conn.Call(ctx, salmonide.MethodCoordinatorStartJob, jobID, nil); err != nil {
+		panic(err)
+	}
+
 	var job salmonide.Job
-	if err := coordinator.Conn.Call(ctx, salmonide.MethodCoordinatorStartJob, jobID, &job); err != nil {
+	if err := coordinator.Conn.Call(ctx, salmonide.MethodCoordinatorJob, jobID, &job); err != nil {
 		panic(err)
 	}
 

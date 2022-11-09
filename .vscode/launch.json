@@ -10,6 +10,7 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/coordinator/cmd/main.go",
+            "cwd": "${workspaceFolder}",
             "env": {
                 "NIX_HARDENING_ENABLE": ""
             }
@@ -20,6 +21,7 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/runner/cmd/main.go",
+            "cwd": "${workspaceFolder}",
             "env": {
                 "NIX_HARDENING_ENABLE": ""
             }

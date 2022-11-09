@@ -8,6 +8,7 @@ import (
 const (
 	MethodCoordinatorCaptureOutput = "coordinator/capture-output"
 	MethodCoordinatorCompleteJob   = "coordinator/complete-job"
+	MethodCoordinatorJob           = "coordinator/job"
 	MethodCoordinatorStartJob      = "coordinator/start-job"
 	MethodCoordinatorTakeJob       = "coordinator/take-job"
 	MethodRunnerJobAvailable       = "runner/job-available"
@@ -50,11 +51,9 @@ func (id JobID) String() string {
 }
 
 type Job struct {
-	ID          JobID
-	SecretToken string
-	ShellScript string
-	Image       string
-	Status      JobStatus
 	ExitCode    int
-	Output      []OutputChunk
+	ID          JobID
+	Image       string
+	ShellScript string
+	Status      JobStatus
 }

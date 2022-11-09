@@ -1,2 +1,5 @@
-/testdata/
+*.sqlite
+*.sqlite-journal
+__debug_bin
+/testdata/*
 !/testdata/configuration.nix
