@@ -21,46 +21,15 @@ type coordinator struct {
 
 func (c *coordinator) onPeerConnected(ctx context.Context, peer salmonide.Peer) error {
 	if peer.Type == salmonide.ActorTypeRunner {
-		tx, err := c.services.DB.BeginTx(ctx, nil)
+		rows, err := c.services.DB.QueryContext(ctx, "select j.id, j.image, j.shell_script from jobs as j where j.status = ?", salmonide.JobStatusNotTaken)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `
-			insert into jobs (
-				image,
-				shell_script,
-				status
-			) values (?, ?, ?)
-		`,
-			"nixos",
-			`for i in $(seq 1000); do
-				echo $i
-				sleep .01
-			done`,
-			salmonide.JobStatusNotTaken,
-		); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-
-		tx, err = c.services.DB.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		rows, err := tx.QueryContext(ctx, "select j.id, j.image, j.shell_script from jobs as j where j.status = ?", salmonide.JobStatusNotTaken)
-		if err != nil {
-			_ = tx.Rollback()
-			return err
-		}
+		defer rows.Close()
 		for rows.Next() {
 			var id int
 			var image, shellScript string
 			if err := rows.Scan(&id, &image, &shellScript); err != nil {
-				_ = tx.Rollback()
 				return err
 			}
 			job := salmonide.Job{
@@ -69,11 +38,9 @@ func (c *coordinator) onPeerConnected(ctx context.Context, peer salmonide.Peer) 
 				ShellScript: shellScript,
 			}
 			if err := peer.Conn.Notify(ctx, salmonide.MethodRunnerJobAvailable, job, nil); err != nil {
-				_ = tx.Rollback()
 				return err
 			}
 		}
-		return tx.Commit()
 	}
 
 	return nil
@@ -85,6 +52,8 @@ func (c *coordinator) handleRequest(ctx context.Context, actor *salmonide.Actor,
 		return c.handleCaptureOutput(ctx, actor, sender, request)
 	case salmonide.MethodCoordinatorCompleteJob:
 		return c.handleCompleteJob(ctx, actor, sender, request)
+	case salmonide.MethodCoordinatorInsertJob:
+		return c.handleInsertJob(ctx, actor, sender, request)
 	case salmonide.MethodCoordinatorJob:
 		return c.handleJob(ctx, actor, sender, request)
 	case salmonide.MethodCoordinatorStartJob:
@@ -173,6 +142,53 @@ func (c *coordinator) handleCompleteJob(ctx context.Context, actor *salmonide.Ac
 	delete(c.handlingWorkers, sender)
 
 	return nil, tx.Commit()
+}
+
+func (c *coordinator) handleInsertJob(ctx context.Context, actor *salmonide.Actor, sender salmonide.PeerID, request *jsonrpc2.Request) (result salmonide.JobID, err error) {
+	if err := salmonide.MustBeRequest(request); err != nil {
+		return result, err
+	}
+
+	params, err := salmonide.ParseParams[salmonide.Job](request)
+	if err != nil {
+		return result, err
+	}
+
+	rows, err := c.services.DB.QueryContext(ctx, `
+		insert into jobs (
+			image,
+			shell_script,
+			status
+		) values (?, ?, ?)
+		returning id
+	`,
+		params.Image,
+		params.ShellScript,
+		salmonide.JobStatusNotTaken,
+	)
+	defer rows.Close()
+	if err != nil {
+		return result, err
+	}
+	if !rows.Next() {
+		return result, errors.New("no ID returned from insert")
+	}
+	if err := rows.Scan(&result); err != nil {
+		return result, err
+	}
+
+	job := salmonide.Job{
+		ID:          result,
+		Image:       params.Image,
+		ShellScript: params.ShellScript,
+	}
+	for _, runner := range actor.FindPeersByType(salmonide.ActorTypeRunner) {
+		if err := runner.Conn.Notify(ctx, salmonide.MethodRunnerJobAvailable, job, nil); err != nil {
+			return result, err
+		}
+	}
+
+	return result, nil
 }
 
 func (c *coordinator) handleJob(ctx context.Context, actor *salmonide.Actor, sender salmonide.PeerID, request *jsonrpc2.Request) (result salmonide.Job, err error) {

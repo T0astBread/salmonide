@@ -153,6 +153,17 @@ func (a *Actor) FindPeer(id PeerID) (Peer, bool) {
 	return peer, ok
 }
 
+func (a *Actor) FindPeersByType(typ ActorType) (matchingPeers []Peer) {
+	a.peersMutex.RLock()
+	defer a.peersMutex.RUnlock()
+	for _, peer := range a.peers {
+		if peer.Type == typ {
+			matchingPeers = append(matchingPeers, peer)
+		}
+	}
+	return matchingPeers
+}
+
 func (a *Actor) GetSender(id PeerID) (Peer, error) {
 	peer, ok := a.FindPeer(id)
 	if !ok {

@@ -8,6 +8,7 @@ import (
 const (
 	MethodCoordinatorCaptureOutput = "coordinator/capture-output"
 	MethodCoordinatorCompleteJob   = "coordinator/complete-job"
+	MethodCoordinatorInsertJob     = "coordinator/insert-job"
 	MethodCoordinatorJob           = "coordinator/job"
 	MethodCoordinatorStartJob      = "coordinator/start-job"
 	MethodCoordinatorTakeJob       = "coordinator/take-job"
