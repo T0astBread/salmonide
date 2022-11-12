@@ -89,5 +89,13 @@ func (r *runner) handleJobAvailable(ctx context.Context, actor *salmonide.Actor,
 		return nil, err
 	}
 
-	return nil, r.services.Qemu.StartVM(ctx, diskFilePath, tokenFilePath)
+	if err := r.services.Qemu.StartVM(ctx, diskFilePath, tokenFilePath); err != nil {
+		return nil, err
+	}
+
+	r.runningJobMutex.Lock()
+	r.runningJob = nil
+	r.runningJobMutex.Unlock()
+
+	return nil, nil
 }
