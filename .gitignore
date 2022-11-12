@@ -1,5 +1,7 @@
 *.sqlite
 *.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
 __debug_bin
 /testdata/*
 !/testdata/configuration.nix
