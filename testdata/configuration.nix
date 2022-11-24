@@ -4,6 +4,7 @@ let
   worker = pkgs.buildGoModule.override
     {
       go = pkgs.go_1_18;
+      stdenv = pkgs.stdenvAdapters.keepDebugInfo pkgs.stdenv;
     }
     rec {
       name = "salmonide-worker";
@@ -31,7 +32,7 @@ in
     keyMap = "de";
   };
 
-  environment.systemPackages = [ worker ];
+  environment.systemPackages = [ worker pkgs.delve pkgs.go_1_18 ];
 
   systemd.services.salmonide-worker = {
     enable = true;
