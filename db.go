@@ -4,14 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"os"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
+var logger = log.New(os.Stderr, "DB | ", log.LstdFlags)
+
 type MigrationFn = func(ctx context.Context, tx *sql.Tx) error
 
 func OpenDB(ctx context.Context, fileName string, migrations []MigrationFn) (db *sql.DB, cleanup func() error, err error) {
-	log.Println("opening database at", fileName)
+	logger.Println("opening database at", fileName)
 
 	db, err = sql.Open("sqlite3", fileName+"?_busy_timeout=5000&_journal_mode=WAL")
 	if err != nil {
@@ -31,7 +34,7 @@ func OpenDB(ctx context.Context, fileName string, migrations []MigrationFn) (db 
 }
 
 func applyMigrations(ctx context.Context, tx *sql.Tx, migrations []MigrationFn) error {
-	log.Println("applying database migrations...")
+	logger.Println("applying database migrations...")
 
 	if _, err := tx.ExecContext(ctx, `
 		create table if not exists _migration_status (
@@ -58,7 +61,7 @@ func applyMigrations(ctx context.Context, tx *sql.Tx, migrations []MigrationFn) 
 	}
 
 	for i, migration := range migrations[:len(migrations)-migrationLevel] {
-		log.Printf("applying database migration %d...", i)
+		logger.Printf("applying database migration %d...", i)
 		if err := migration(ctx, tx); err != nil {
 			return err
 		}

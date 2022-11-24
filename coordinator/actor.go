@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sync"
 
 	"github.com/sourcegraph/jsonrpc2"
 	"tbx.at/salmonide"
@@ -12,14 +11,43 @@ import (
 )
 
 type coordinator struct {
+	*salmonide.Actor
 	services service.Services
 
 	handlingWorkers       map[salmonide.PeerID]salmonide.JobID
-	handlingWorkersMutex  sync.RWMutex
 	stmtInsertOutputChunk *sql.Stmt
 }
 
-func (c *coordinator) onPeerConnected(ctx context.Context, peer salmonide.Peer) error {
+func NewCoordinator(ctx context.Context, services service.Services) (*salmonide.Actor, error) {
+	stmtInsertOutputChunk, err := services.DB.PrepareContext(ctx, `
+		insert into output_chunks (
+			content,
+			job_id,
+			stream,
+			timestamp
+		) values (?, ?, ?, ?)
+	`)
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		<-ctx.Done()
+		_ = stmtInsertOutputChunk.Close()
+	}()
+
+	c := coordinator{
+		services: services,
+
+		handlingWorkers:       map[salmonide.PeerID]salmonide.JobID{},
+		stmtInsertOutputChunk: stmtInsertOutputChunk,
+	}
+
+	c.Actor = salmonide.NewActor(services.LogWriter, "coordinator", salmonide.ActorTypeCoordinator, c.onPeerConnected, nil, nil, c.handleRequest)
+
+	return c.Actor, nil
+}
+
+func (c *coordinator) onPeerConnected(ctx context.Context, peer *salmonide.Peer) error {
 	if peer.Type == salmonide.ActorTypeRunner {
 		rows, err := c.services.DB.QueryContext(ctx, "select j.id, j.image, j.shell_script from jobs as j where j.status = ?", salmonide.JobStatusNotTaken)
 		if err != nil {
@@ -46,25 +74,25 @@ func (c *coordinator) onPeerConnected(ctx context.Context, peer salmonide.Peer) 
 	return nil
 }
 
-func (c *coordinator) handleRequest(ctx context.Context, actor *salmonide.Actor, sender salmonide.PeerID, request *jsonrpc2.Request) (result interface{}, err error) {
+func (c *coordinator) handleRequest(ctx context.Context, sender *salmonide.Peer, request *jsonrpc2.Request) (result interface{}, err error) {
 	switch request.Method {
 	case salmonide.MethodCoordinatorCaptureOutput:
-		return c.handleCaptureOutput(ctx, actor, sender, request)
+		return c.handleCaptureOutput(ctx, sender, request)
 	case salmonide.MethodCoordinatorCompleteJob:
-		return c.handleCompleteJob(ctx, actor, sender, request)
+		return c.handleCompleteJob(ctx, sender, request)
 	case salmonide.MethodCoordinatorInsertJob:
-		return c.handleInsertJob(ctx, actor, sender, request)
+		return c.handleInsertJob(ctx, sender, request)
 	case salmonide.MethodCoordinatorJob:
-		return c.handleJob(ctx, actor, sender, request)
+		return c.handleJob(ctx, sender, request)
 	case salmonide.MethodCoordinatorStartJob:
-		return c.handleStartJob(ctx, actor, sender, request)
+		return c.handleStartJob(ctx, sender, request)
 	case salmonide.MethodCoordinatorTakeJob:
-		return c.handleTakeJob(ctx, actor, sender, request)
+		return c.handleTakeJob(ctx, sender, request)
 	}
 	return nil, salmonide.NewMethodNotFoundError(request.Method)
 }
 
-func (c *coordinator) handleCaptureOutput(ctx context.Context, actor *salmonide.Actor, sender salmonide.PeerID, request *jsonrpc2.Request) (result interface{}, err error) {
+func (c *coordinator) handleCaptureOutput(ctx context.Context, sender *salmonide.Peer, request *jsonrpc2.Request) (result interface{}, err error) {
 	if err := salmonide.MustBeNotification(request); err != nil {
 		return false, err
 	}
@@ -74,9 +102,7 @@ func (c *coordinator) handleCaptureOutput(ctx context.Context, actor *salmonide.
 		return nil, err
 	}
 
-	c.handlingWorkersMutex.RLock()
-	jobID, ok := c.handlingWorkers[sender]
-	defer c.handlingWorkersMutex.RUnlock()
+	jobID, ok := c.handlingWorkers[sender.ID]
 	if !ok {
 		return nil, errors.New("no job found that is handled by this peer")
 	}
@@ -93,7 +119,7 @@ func (c *coordinator) handleCaptureOutput(ctx context.Context, actor *salmonide.
 	return
 }
 
-func (c *coordinator) handleCompleteJob(ctx context.Context, actor *salmonide.Actor, sender salmonide.PeerID, request *jsonrpc2.Request) (result interface{}, err error) {
+func (c *coordinator) handleCompleteJob(ctx context.Context, sender *salmonide.Peer, request *jsonrpc2.Request) (result interface{}, err error) {
 	if err := salmonide.MustBeRequest(request); err != nil {
 		return false, err
 	}
@@ -107,9 +133,6 @@ func (c *coordinator) handleCompleteJob(ctx context.Context, actor *salmonide.Ac
 	if err != nil {
 		return nil, err
 	}
-
-	c.handlingWorkersMutex.Lock()
-	defer c.handlingWorkersMutex.Unlock()
 
 	updateResult, err := tx.ExecContext(ctx, `
 		update jobs as j
@@ -139,12 +162,12 @@ func (c *coordinator) handleCompleteJob(ctx context.Context, actor *salmonide.Ac
 		}
 	}
 
-	delete(c.handlingWorkers, sender)
+	delete(c.handlingWorkers, sender.ID)
 
 	return nil, tx.Commit()
 }
 
-func (c *coordinator) handleInsertJob(ctx context.Context, actor *salmonide.Actor, sender salmonide.PeerID, request *jsonrpc2.Request) (result salmonide.JobID, err error) {
+func (c *coordinator) handleInsertJob(ctx context.Context, sender *salmonide.Peer, request *jsonrpc2.Request) (result salmonide.JobID, err error) {
 	if err := salmonide.MustBeRequest(request); err != nil {
 		return result, err
 	}
@@ -182,7 +205,7 @@ func (c *coordinator) handleInsertJob(ctx context.Context, actor *salmonide.Acto
 		Image:       params.Image,
 		ShellScript: params.ShellScript,
 	}
-	for _, runner := range actor.FindPeersByType(salmonide.ActorTypeRunner) {
+	for _, runner := range c.Actor.FindPeersByType(salmonide.ActorTypeRunner) {
 		if err := runner.Conn.Notify(ctx, salmonide.MethodRunnerJobAvailable, job, nil); err != nil {
 			return result, err
 		}
@@ -191,7 +214,7 @@ func (c *coordinator) handleInsertJob(ctx context.Context, actor *salmonide.Acto
 	return result, nil
 }
 
-func (c *coordinator) handleJob(ctx context.Context, actor *salmonide.Actor, sender salmonide.PeerID, request *jsonrpc2.Request) (result salmonide.Job, err error) {
+func (c *coordinator) handleJob(ctx context.Context, sender *salmonide.Peer, request *jsonrpc2.Request) (result salmonide.Job, err error) {
 	if err := salmonide.MustBeRequest(request); err != nil {
 		return result, err
 	}
@@ -235,7 +258,7 @@ func (c *coordinator) handleJob(ctx context.Context, actor *salmonide.Actor, sen
 	}, nil
 }
 
-func (c *coordinator) handleStartJob(ctx context.Context, actor *salmonide.Actor, sender salmonide.PeerID, request *jsonrpc2.Request) (result interface{}, err error) {
+func (c *coordinator) handleStartJob(ctx context.Context, sender *salmonide.Peer, request *jsonrpc2.Request) (result interface{}, err error) {
 	if err := salmonide.MustBeRequest(request); err != nil {
 		return nil, err
 	}
@@ -244,9 +267,6 @@ func (c *coordinator) handleStartJob(ctx context.Context, actor *salmonide.Actor
 	if err != nil {
 		return nil, err
 	}
-
-	c.handlingWorkersMutex.Lock()
-	defer c.handlingWorkersMutex.Unlock()
 
 	tx, err := c.services.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -279,12 +299,12 @@ func (c *coordinator) handleStartJob(ctx context.Context, actor *salmonide.Actor
 		}
 	}
 
-	c.handlingWorkers[sender] = jobID
+	c.handlingWorkers[sender.ID] = jobID
 
 	return nil, tx.Commit()
 }
 
-func (c *coordinator) handleTakeJob(ctx context.Context, actor *salmonide.Actor, sender salmonide.PeerID, request *jsonrpc2.Request) (result bool, err error) {
+func (c *coordinator) handleTakeJob(ctx context.Context, sender *salmonide.Peer, request *jsonrpc2.Request) (result bool, err error) {
 	if err := salmonide.MustBeRequest(request); err != nil {
 		return false, err
 	}
@@ -329,34 +349,4 @@ func (c *coordinator) handleTakeJob(ctx context.Context, actor *salmonide.Actor,
 	}
 
 	return true, nil
-}
-
-func NewCoordinator(ctx context.Context, services service.Services) (*salmonide.Actor, error) {
-	stmtInsertOutputChunk, err := services.DB.PrepareContext(ctx, `
-		insert into output_chunks (
-			content,
-			job_id,
-			stream,
-			timestamp
-		) values (?, ?, ?, ?)
-	`)
-	if err != nil {
-		return nil, err
-	}
-	go func() {
-		<-ctx.Done()
-		_ = stmtInsertOutputChunk.Close()
-	}()
-
-	c := coordinator{
-		services: services,
-
-		handlingWorkers:       map[salmonide.PeerID]salmonide.JobID{},
-		stmtInsertOutputChunk: stmtInsertOutputChunk,
-	}
-
-	actor := salmonide.NewActor("coordinator", salmonide.ActorTypeCoordinator, c.handleRequest)
-	actor.OnPeerConnected = c.onPeerConnected
-
-	return actor, nil
 }

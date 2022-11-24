@@ -1,9 +1,13 @@
 package service
 
-import "database/sql"
+import (
+	"database/sql"
+	"io"
+)
 
 type Services struct {
-	DB *sql.DB
+	DB        *sql.DB
+	LogWriter io.Writer
 
 	DiskFile    DiskFileService
 	Exec        ExecService

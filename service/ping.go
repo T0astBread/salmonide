@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net"
 	"time"
 
@@ -34,13 +35,21 @@ func (*PingServiceImpl) Ping(ctx context.Context, network string, address string
 	}
 	defer netConn.Close()
 
-	stream := jsonrpc2.NewBufferedStream(netConn, jsonrpc2.PlainObjectCodec{})
+	stream := jsonrpc2.NewBufferedStream(netConn, jsonrpc2.VarintObjectCodec{})
 	conn := jsonrpc2.NewConn(ctx, stream, &pingServiceHandler{})
 	defer conn.Close()
 
 	pingCtx, cancelPingCtx := context.WithTimeout(ctx, 5*time.Second)
 	defer cancelPingCtx()
-	return conn.Call(pingCtx, salmonide.MethodPing, nil, nil)
+	var response string
+	if err := conn.Call(pingCtx, salmonide.MethodPing, nil, &response); err != nil {
+		return err
+	}
+
+	if response != "pong" {
+		return errors.New("response to ping wasn't \"pong\"")
+	}
+	return nil
 }
 
 var _ PingService = (*PingServiceImpl)(nil)
