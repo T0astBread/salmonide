@@ -8,4 +8,6 @@ mkShell {
     qemu
     sqlitebrowser
   ];
+
+  shellHook = "\${NIX_SHELL_GLOBAL_HOOK:-}";
 }
