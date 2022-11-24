@@ -31,6 +31,16 @@ func main() {
 		panic(err)
 	}
 
+	if _, err := db.Exec(`
+		insert into jobs (
+			image,
+			shell_script,
+			status
+		) values ('nixos', 'echo heyho; date', 1)
+	`); err != nil {
+		panic(err)
+	}
+
 	services := service.Services{
 		DB:        db,
 		LogWriter: os.Stderr,
